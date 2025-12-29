@@ -284,15 +284,14 @@ This pipeline includes features for regulatory compliance:
 
 ## License
 
-[Your License]
-
+Apache License 2.0
 ## Citation
 
 ```bibtex
 @software{clinical_rlhf_pipeline,
   title = {Clinical RLHF Pipeline},
-  author = {Your Name},
-  year = {2024},
+  author = {Daniil Krizhanovskiy},
+  year = {2025},
   url = {https://github.com/arec1b0/clinical-rlhf-pipeline}
 }
 ```
