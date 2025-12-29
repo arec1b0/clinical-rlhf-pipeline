@@ -1,0 +1,118 @@
+# Clinical RLHF Pipeline Configuration
+# Production-ready config with multi-objective reward design
+
+model:
+  base_model: "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
+  policy_model: "gpt2-medium"  # For local testing, swap for clinical LLM
+  max_length: 512
+  device: "cuda"
+
+reward_weights:
+  # Multi-objective reward weights (must sum to 1.0)
+  uncertainty_quantification: 0.25
+  guideline_adherence: 0.30
+  patient_safety: 0.35
+  response_coherence: 0.10
+
+uncertainty:
+  # Calibration settings for epistemic uncertainty
+  mc_dropout_samples: 10
+  temperature_scaling: true
+  confidence_threshold: 0.7
+  # Penalty for overconfident wrong predictions
+  overconfidence_penalty: 2.0
+
+safety:
+  # Red flag symptoms that require immediate escalation
+  red_flag_symptoms:
+    - "chest pain"
+    - "difficulty breathing"
+    - "sudden severe headache"
+    - "loss of consciousness"
+    - "signs of stroke"
+    - "severe allergic reaction"
+    - "suicidal ideation"
+  
+  # Contraindication database path
+  contraindications_db: "data/contraindications.json"
+  
+  # Safety score thresholds
+  hard_safety_threshold: 0.3  # Below this = reject response
+  soft_safety_threshold: 0.6  # Below this = add disclaimer
+  
+  # Dosage validation
+  dosage_validation: true
+  dosage_db: "data/medication_dosages.json"
+
+guidelines:
+  # Clinical guideline sources
+  sources:
+    - name: "CDC"
+      weight: 0.3
+    - name: "WHO"
+      weight: 0.25
+    - name: "NICE"
+      weight: 0.25
+    - name: "UpToDate"
+      weight: 0.2
+  
+  # Embedding model for semantic similarity
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  
+  # Minimum adherence score
+  min_adherence_score: 0.5
+
+training:
+  # PPO hyperparameters
+  ppo:
+    learning_rate: 1.41e-5
+    batch_size: 64
+    mini_batch_size: 16
+    ppo_epochs: 4
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_range: 0.2
+    clip_range_vf: 0.2
+    vf_coef: 0.5
+    max_grad_norm: 0.5
+    target_kl: 0.01
+  
+  # Training schedule
+  total_steps: 100000
+  eval_frequency: 1000
+  save_frequency: 5000
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 5
+    min_delta: 0.001
+
+observability:
+  mlflow:
+    tracking_uri: "http://localhost:5000"
+    experiment_name: "clinical-rlhf"
+    
+  prometheus:
+    enabled: true
+    port: 8000
+    
+  logging:
+    level: "INFO"
+    format: "json"
+    
+  alerts:
+    safety_violation_threshold: 0.1
+    reward_degradation_threshold: 0.15
+
+data:
+  # Expert feedback collection
+  feedback_collection:
+    min_experts_per_sample: 3
+    agreement_threshold: 0.7
+    
+  # Data quality checks
+  quality_checks:
+    - "duplicate_detection"
+    - "label_consistency"
+    - "temporal_leakage"

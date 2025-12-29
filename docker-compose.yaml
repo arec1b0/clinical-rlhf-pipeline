@@ -1,0 +1,113 @@
+# Docker Compose for Clinical RLHF Pipeline
+# Includes training, monitoring, and experiment tracking
+
+version: '3.8'
+
+services:
+  # Main training service
+  clinical-rlhf:
+    build:
+      context: .
+      target: runtime
+    container_name: clinical-rlhf-training
+    volumes:
+      - ./config:/app/config:ro
+      - ./checkpoints:/app/checkpoints
+      - ./logs:/app/logs
+      - ./feedback_data:/app/feedback_data
+      - model-cache:/home/clinical/.cache
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - mlflow
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      python main.py train 
+      --config config/clinical_rlhf_config.yaml
+    networks:
+      - clinical-network
+
+  # MLflow tracking server
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.8.0
+    container_name: mlflow-server
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=sqlite:///mlflow/mlflow.db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    networks:
+      - clinical-network
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - clinical-network
+
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=clinical_rlhf_2024
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    networks:
+      - clinical-network
+
+  # Redis for distributed training coordination (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - clinical-network
+
+volumes:
+  mlflow-data:
+  prometheus-data:
+  grafana-data:
+  redis-data:
+  model-cache:
+
+networks:
+  clinical-network:
+    driver: bridge
