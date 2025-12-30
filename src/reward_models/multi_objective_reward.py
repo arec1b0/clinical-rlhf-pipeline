@@ -692,7 +692,20 @@ class MultiObjectiveRewardModel(nn.Module):
 
 def create_reward_model_from_config(config: Dict[str, Any]) -> MultiObjectiveRewardModel:
     """Factory function to create reward model from config."""
-    device = config.get("model", {}).get("device", "cuda")
+    device_config = config.get("model", {}).get("device", "auto")
+    
+    # Auto-detect device
+    if device_config == "auto":
+        import torch
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+    else:
+        device = device_config
+    
     weights = config.get("reward_weights", {})
     
     # Placeholder models - in production these would be properly initialized

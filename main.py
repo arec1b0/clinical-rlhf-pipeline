@@ -21,6 +21,20 @@ from datetime import datetime
 import torch
 import torch.nn as nn
 
+# Ensure logs directory exists before setting up logging
+Path('logs').mkdir(parents=True, exist_ok=True)
+Path('checkpoints').mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(f'logs/clinical_rlhf_{datetime.now():%Y%m%d_%H%M%S}.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # Local imports
 from src.reward_models.multi_objective_reward import (
     MultiObjectiveRewardModel,
@@ -35,16 +49,6 @@ from src.training.ppo_trainer import ClinicalPPOTrainer, PPOConfig
 from src.data.expert_feedback import ExpertFeedbackCollector, Expert, ExpertRole, PreferenceType
 from src.evaluation.monitoring import ClinicalRLHFMonitor, DriftAlert
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(f'logs/clinical_rlhf_{datetime.now():%Y%m%d_%H%M%S}.log')
-    ]
-)
-logger = logging.getLogger(__name__)
-
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file."""
@@ -54,13 +58,31 @@ def load_config(config_path: str) -> dict:
     return config
 
 
+def get_device(config: dict) -> str:
+    """Determine the device to use for training."""
+    device_config = config.get("model", {}).get("device", "auto")
+    
+    if device_config == "auto":
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+    else:
+        device = device_config
+    
+    logger.info(f"Using device: {device}")
+    return device
+
+
 def create_mock_models(config: dict):
     """
     Create mock models for demonstration.
     
     In production, replace with actual medical LLMs.
     """
-    device = config.get("model", {}).get("device", "cuda")
+    device = get_device(config)
     
     # Mock policy model
     class MockPolicyModel(nn.Module):
@@ -88,14 +110,15 @@ def create_mock_models(config: dict):
             return type('Output', (), {'loss': loss, 'logits': logits})()
         
         def generate(self, input_ids, max_new_tokens=50, **kwargs):
-            # Mock generation
+            # Mock generation - ensure tensors are on same device
             batch_size = input_ids.shape[0]
-            generated = torch.randint(0, 50000, (batch_size, max_new_tokens))
+            device = input_ids.device
+            generated = torch.randint(0, 50000, (batch_size, max_new_tokens), device=device)
             sequences = torch.cat([input_ids, generated], dim=1)
             
             return type('GenerateOutput', (), {
                 'sequences': sequences,
-                'scores': [torch.randn(batch_size, 50000) for _ in range(max_new_tokens)]
+                'scores': [torch.randn(batch_size, 50000, device=device) for _ in range(max_new_tokens)]
             })()
     
     # Mock value model
@@ -115,7 +138,28 @@ def create_mock_models(config: dict):
             value = self.value_head(x[:, -1, :])
             return value
     
-    # Mock tokenizer
+    # Mock tokenizer with proper device support
+    class TokenizerOutput:
+        """Tokenizer output that supports .to() method for device movement."""
+        def __init__(self, input_ids, attention_mask):
+            self.input_ids = input_ids
+            self.attention_mask = attention_mask
+        
+        def to(self, device):
+            self.input_ids = self.input_ids.to(device)
+            self.attention_mask = self.attention_mask.to(device)
+            return self
+        
+        def __getitem__(self, key):
+            if key == 'input_ids':
+                return self.input_ids
+            elif key == 'attention_mask':
+                return self.attention_mask
+            raise KeyError(key)
+        
+        def keys(self):
+            return ['input_ids', 'attention_mask']
+    
     class MockTokenizer:
         def __init__(self):
             self.pad_token_id = 0
@@ -126,13 +170,13 @@ def create_mock_models(config: dict):
             if isinstance(text, str):
                 text = [text]
             
-            input_ids = torch.randint(2, 50000, (len(text), min(len(text[0].split()) * 2, max_length)))
+            seq_len = min(len(text[0].split()) * 2, max_length)
+            seq_len = max(seq_len, 10)  # Minimum sequence length
+            
+            input_ids = torch.randint(2, 50000, (len(text), seq_len))
             attention_mask = torch.ones_like(input_ids)
             
-            return type('TokenizerOutput', (), {
-                'input_ids': input_ids,
-                'attention_mask': attention_mask
-            })()
+            return TokenizerOutput(input_ids, attention_mask)
         
         def decode(self, token_ids, skip_special_tokens=True):
             # Mock decoding
@@ -178,9 +222,15 @@ def train_pipeline(config: dict):
     logger.info("Safety guardrails initialized")
     
     # Create PPO trainer
+    training_config = config.get("training", {})
+    ppo_params = training_config.get("ppo", {})
     ppo_config = PPOConfig(
-        **config.get("training", {}).get("ppo", {}),
-        device=config.get("model", {}).get("device", "cuda")
+        **ppo_params,
+        device=get_device(config),
+        max_unsafe_ratio=training_config.get("max_unsafe_ratio", 0.05),
+        total_steps=training_config.get("total_steps", 100000),
+        eval_frequency=training_config.get("eval_frequency", 1000),
+        save_frequency=training_config.get("save_frequency", 5000),
     )
     
     trainer = ClinicalPPOTrainer(
@@ -215,9 +265,9 @@ def train_pipeline(config: dict):
         "Is it safe to take aspirin daily?",
         "What should I do for a severe headache?",
         "How do I manage high blood pressure?",
-    ] * 100  # Repeat for more training data
+    ] * 10  # Reduced for demo (was *100)
     
-    eval_queries = train_queries[:50]
+    eval_queries = train_queries[:10]
     
     logger.info(f"Training on {len(train_queries)} queries")
     

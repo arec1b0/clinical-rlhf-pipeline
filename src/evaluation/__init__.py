@@ -2,15 +2,19 @@
 from .monitoring import (
     ClinicalRLHFMonitor,
     DriftAlert,
+    DriftType,
     AlertSeverity,
+    StatisticalTests,
+    MetricWindow,
     ModelComparator,
-    ComparisonResult,
 )
 
 __all__ = [
     "ClinicalRLHFMonitor",
     "DriftAlert",
+    "DriftType",
     "AlertSeverity",
+    "StatisticalTests",
+    "MetricWindow",
     "ModelComparator",
-    "ComparisonResult",
 ]

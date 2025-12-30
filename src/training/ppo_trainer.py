@@ -390,12 +390,15 @@ class ClinicalPPOTrainer:
             return_tensors="pt",
             truncation=True,
             max_length=256
-        ).to(self.config.device)
+        )
+        
+        # Move input_ids to device - direct tensor access to avoid .to() issues
+        input_ids = inputs.input_ids.to(self.config.device)
         
         # Generate
         with torch.no_grad():
             outputs = self.policy.generate(
-                **inputs,
+                input_ids=input_ids,
                 max_new_tokens=256,
                 do_sample=True,
                 temperature=0.7,
@@ -406,7 +409,7 @@ class ClinicalPPOTrainer:
         
         # Decode response
         response = self.tokenizer.decode(
-            outputs.sequences[0][inputs.input_ids.shape[1]:],
+            outputs.sequences[0][input_ids.shape[1]:],
             skip_special_tokens=True
         )
         
@@ -415,7 +418,7 @@ class ClinicalPPOTrainer:
             # Compute log prob from generation scores
             log_probs = []
             for i, score in enumerate(outputs.scores):
-                token_id = outputs.sequences[0, inputs.input_ids.shape[1] + i]
+                token_id = outputs.sequences[0, input_ids.shape[1] + i]
                 log_prob = F.log_softmax(score[0], dim=-1)[token_id]
                 log_probs.append(log_prob)
             total_log_prob = torch.stack(log_probs).sum()
@@ -434,10 +437,13 @@ class ClinicalPPOTrainer:
             return_tensors="pt",
             truncation=True,
             max_length=512
-        ).to(self.config.device)
+        )
+        
+        # Move input_ids to device directly
+        input_ids = inputs.input_ids.to(self.config.device)
         
         with torch.no_grad():
-            value = self.value(**inputs).squeeze().item()
+            value = self.value(input_ids=input_ids).squeeze().item()
         
         return value
     
@@ -507,11 +513,14 @@ class ClinicalPPOTrainer:
                 return_tensors="pt",
                 truncation=True,
                 max_length=512
-            ).to(self.config.device)
+            )
             
-            outputs = self.policy(**inputs, labels=inputs.input_ids)
+            # Move input_ids to device directly
+            input_ids = inputs.input_ids.to(self.config.device)
+            
+            outputs = self.policy(input_ids=input_ids, labels=input_ids)
             # Approximate log prob from loss
-            log_prob = -outputs.loss * inputs.input_ids.shape[1]
+            log_prob = -outputs.loss * input_ids.shape[1]
             new_log_probs.append(log_prob)
         
         new_log_probs = torch.stack(new_log_probs)
@@ -564,9 +573,12 @@ class ClinicalPPOTrainer:
                 return_tensors="pt",
                 truncation=True,
                 max_length=512
-            ).to(self.config.device)
+            )
             
-            value = self.value(**inputs).squeeze()
+            # Move input_ids to device directly
+            input_ids = inputs.input_ids.to(self.config.device)
+            
+            value = self.value(input_ids=input_ids).squeeze()
             values.append(value)
         
         values = torch.stack(values)
