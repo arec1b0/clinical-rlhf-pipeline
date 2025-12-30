@@ -9,7 +9,17 @@ from .monitoring import (
     ModelComparator,
 )
 
+from .memory_monitor import (
+    MemoryMonitor,
+    MemoryConfig,
+    MemorySnapshot,
+    MemoryPressureLevel,
+    MemoryLeakDetector,
+    create_memory_monitor,
+)
+
 __all__ = [
+    # Monitoring
     "ClinicalRLHFMonitor",
     "DriftAlert",
     "DriftType",
@@ -17,4 +27,11 @@ __all__ = [
     "StatisticalTests",
     "MetricWindow",
     "ModelComparator",
+    # Memory Monitor
+    "MemoryMonitor",
+    "MemoryConfig",
+    "MemorySnapshot",
+    "MemoryPressureLevel",
+    "MemoryLeakDetector",
+    "create_memory_monitor",
 ]
