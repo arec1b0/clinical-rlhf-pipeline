@@ -1,20 +1,51 @@
-# Clinical RLHF Pipeline Configuration
-# Production-ready config with multi-objective reward design
+# Clinical RLHF Pipeline - Production Configuration
+# Uses real medical LLMs with quantization and LoRA
 
 model:
-  # Use mock models for demo (set false for real medical LLMs)
-  use_mock_models: true
-  
-  # Medical LLM to use when use_mock_models: false
+  # Model selection (see src/models/model_registry.py for options)
   # Options: biogpt, biomistral-7b, meditron-7b, openbiollm-8b, medalpaca-7b
   medical_llm: "biomistral-7b"
   
-  # Legacy settings (for reference)
-  base_model: "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext"
-  policy_model: "gpt2-medium"
+  # Set to false to use real models instead of mocks
+  use_mock_models: false
   
-  max_length: 512
-  device: "auto"  # auto-detects cuda/mps/cpu
+  # Auto-select based on hardware (overrides medical_llm if true)
+  auto_select_model: false
+  
+  # Device settings
+  device: "auto"  # auto, cuda, cpu, mps
+  
+  # Maximum sequence length
+  max_length: 2048
+
+# Model loading configuration
+model_loading:
+  # Quantization (saves GPU memory)
+  load_in_4bit: true
+  load_in_8bit: false
+  
+  # BitsAndBytes 4-bit config
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true
+  
+  # Flash Attention (faster on Ampere+ GPUs)
+  use_flash_attention: true
+  
+  # LoRA fine-tuning config
+  use_lora: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  
+  # Memory optimization
+  gradient_checkpointing: true
+  
+  # Share base model between policy and value (saves ~50% memory)
+  share_value_base: false
+  
+  # HuggingFace cache directory (optional)
+  cache_dir: null
 
 reward_weights:
   # Multi-objective reward weights (must sum to 1.0)
@@ -24,15 +55,12 @@ reward_weights:
   response_coherence: 0.10
 
 uncertainty:
-  # Calibration settings for epistemic uncertainty
   mc_dropout_samples: 10
   temperature_scaling: true
   confidence_threshold: 0.7
-  # Penalty for overconfident wrong predictions
   overconfidence_penalty: 2.0
 
 safety:
-  # Red flag symptoms that require immediate escalation
   red_flag_symptoms:
     - "chest pain"
     - "difficulty breathing"
@@ -42,19 +70,13 @@ safety:
     - "severe allergic reaction"
     - "suicidal ideation"
   
-  # Contraindication database path
   contraindications_db: "data/contraindications.json"
-  
-  # Safety score thresholds
-  hard_safety_threshold: 0.3  # Below this = reject response
-  soft_safety_threshold: 0.6  # Below this = add disclaimer
-  
-  # Dosage validation
+  hard_safety_threshold: 0.3
+  soft_safety_threshold: 0.6
   dosage_validation: true
   dosage_db: "data/medication_dosages.json"
 
 guidelines:
-  # Clinical guideline sources
   sources:
     - name: "CDC"
       weight: 0.3
@@ -65,31 +87,27 @@ guidelines:
     - name: "UpToDate"
       weight: 0.2
   
-  # Embedding model for semantic similarity
   embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
-  
-  # Minimum adherence score
   min_adherence_score: 0.5
 
 training:
-  # PPO hyperparameters
   ppo:
-    learning_rate: 1.41e-5
-    batch_size: 8  # Reduced for demo (was 64)
-    mini_batch_size: 4  # Reduced for demo (was 16)
-    ppo_epochs: 2  # Reduced for demo (was 4)
+    learning_rate: 1.0e-5  # Lower LR for real models
+    batch_size: 4  # Smaller batch for memory
+    mini_batch_size: 2
+    ppo_epochs: 4
     gamma: 0.99
     gae_lambda: 0.95
     clip_range: 0.2
     clip_range_vf: 0.2
     vf_coef: 0.5
     max_grad_norm: 0.5
-    target_kl: 10000.0  # Very high for demo with mock models (normally 0.01)
+    target_kl: 0.01
   
-  # Training schedule (reduced for demo)
-  total_steps: 100  # Was 100000, reduced for quick demo
-  eval_frequency: 50
-  save_frequency: 50
+  # Training schedule
+  total_steps: 10000
+  eval_frequency: 500
+  save_frequency: 1000
   
   # Early stopping
   early_stopping:
@@ -97,13 +115,13 @@ training:
     patience: 5
     min_delta: 0.001
   
-  # For demo with mock models (random outputs fail safety checks)
-  max_unsafe_ratio: 0.5  # Allow up to 50% unsafe for demo
+  # Safety constraints
+  max_unsafe_ratio: 0.05
 
 observability:
   mlflow:
     tracking_uri: "http://localhost:5000"
-    experiment_name: "clinical-rlhf"
+    experiment_name: "clinical-rlhf-production"
     
   prometheus:
     enabled: true
@@ -118,12 +136,10 @@ observability:
     reward_degradation_threshold: 0.15
 
 data:
-  # Expert feedback collection
   feedback_collection:
     min_experts_per_sample: 3
     agreement_threshold: 0.7
     
-  # Data quality checks
   quality_checks:
     - "duplicate_detection"
     - "label_consistency"

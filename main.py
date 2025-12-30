@@ -49,6 +49,21 @@ from src.training.ppo_trainer import ClinicalPPOTrainer, PPOConfig
 from src.data.expert_feedback import ExpertFeedbackCollector, Expert, ExpertRole, PreferenceType
 from src.evaluation.monitoring import ClinicalRLHFMonitor, DriftAlert
 
+# Conditional import for medical models
+try:
+    from src.models import (
+        MedicalLLMFactory,
+        LoadConfig,
+        load_medical_models,
+        auto_select_model,
+        list_available_models,
+        get_model_config,
+    )
+    MEDICAL_MODELS_AVAILABLE = True
+except ImportError:
+    MEDICAL_MODELS_AVAILABLE = False
+    logger.warning("Medical models module not available. Install with: pip install transformers peft bitsandbytes")
+
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file."""
@@ -189,6 +204,90 @@ def create_mock_models(config: dict):
     return policy, value, tokenizer
 
 
+def create_medical_models(config: dict):
+    """
+    Create real medical LLM models for production training.
+    
+    Requires:
+    - transformers
+    - peft (for LoRA)
+    - bitsandbytes (for quantization)
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        Tuple of (policy_model, value_model, tokenizer)
+    """
+    if not MEDICAL_MODELS_AVAILABLE:
+        raise RuntimeError(
+            "Medical models not available. Install dependencies:\n"
+            "pip install transformers>=4.36.0 peft>=0.7.0 bitsandbytes>=0.41.0 accelerate>=0.25.0"
+        )
+    
+    model_config = config.get("model", {})
+    loading_config = config.get("model_loading", {})
+    
+    # Determine which model to use
+    if model_config.get("auto_select_model", False):
+        model_id = auto_select_model(
+            prefer_accuracy=True,
+            require_lora=loading_config.get("use_lora", True),
+        )
+        logger.info(f"Auto-selected model: {model_id}")
+    else:
+        model_id = model_config.get("medical_llm", "biomistral-7b")
+    
+    # Create load configuration
+    load_config = LoadConfig(
+        load_in_4bit=loading_config.get("load_in_4bit", True),
+        load_in_8bit=loading_config.get("load_in_8bit", False),
+        use_flash_attention=loading_config.get("use_flash_attention", True),
+        bnb_4bit_compute_dtype=loading_config.get("bnb_4bit_compute_dtype", "bfloat16"),
+        bnb_4bit_quant_type=loading_config.get("bnb_4bit_quant_type", "nf4"),
+        bnb_4bit_use_double_quant=loading_config.get("bnb_4bit_use_double_quant", True),
+        use_lora=loading_config.get("use_lora", True),
+        lora_r=loading_config.get("lora_r", 16),
+        lora_alpha=loading_config.get("lora_alpha", 32),
+        lora_dropout=loading_config.get("lora_dropout", 0.05),
+        gradient_checkpointing=loading_config.get("gradient_checkpointing", True),
+        cache_dir=loading_config.get("cache_dir"),
+    )
+    
+    device = get_device(config)
+    share_value_base = loading_config.get("share_value_base", False)
+    
+    logger.info(f"Loading medical LLM: {model_id}")
+    logger.info(f"Quantization: 4bit={load_config.load_in_4bit}, 8bit={load_config.load_in_8bit}")
+    logger.info(f"LoRA: enabled={load_config.use_lora}, r={load_config.lora_r}")
+    
+    # Load models
+    policy, value, tokenizer = load_medical_models(
+        model_id=model_id,
+        load_config=load_config,
+        device=device,
+        share_value_base=share_value_base,
+    )
+    
+    return policy, value, tokenizer
+
+
+def create_models(config: dict):
+    """
+    Create models based on configuration.
+    
+    Chooses between mock models (for demo) and real medical LLMs (for production).
+    """
+    use_mock = config.get("model", {}).get("use_mock_models", True)
+    
+    if use_mock:
+        logger.info("Using mock models (demo mode)")
+        return create_mock_models(config)
+    else:
+        logger.info("Using real medical LLMs (production mode)")
+        return create_medical_models(config)
+
+
 def train_pipeline(config: dict):
     """
     Main training pipeline.
@@ -206,8 +305,8 @@ def train_pipeline(config: dict):
     Path("checkpoints").mkdir(exist_ok=True)
     Path("logs").mkdir(exist_ok=True)
     
-    # Initialize models
-    policy, value, tokenizer = create_mock_models(config)
+    # Initialize models (mock or real based on config)
+    policy, value, tokenizer = create_models(config)
     logger.info("Models initialized")
     
     # Create reward model
@@ -455,6 +554,46 @@ def run_safety_demo(config: dict):
     print("\n" + "="*80)
 
 
+def list_models_command():
+    """List available medical LLM models."""
+    if not MEDICAL_MODELS_AVAILABLE:
+        print("Medical models module not available.")
+        print("Install: pip install transformers peft bitsandbytes accelerate")
+        return
+    
+    print("\n" + "="*80)
+    print("AVAILABLE MEDICAL LLM MODELS")
+    print("="*80)
+    
+    models = list_available_models()
+    
+    # Group by size
+    from src.models.model_registry import ModelSize
+    
+    for size in ModelSize:
+        size_models = [m for m in models if m.size == size]
+        if not size_models:
+            continue
+            
+        print(f"\n### {size.value.upper()} MODELS ###")
+        print("-" * 40)
+        
+        for m in size_models:
+            print(f"\n  {m.model_id}")
+            print(f"    Name: {m.name}")
+            print(f"    Params: {m.params_billions}B")
+            print(f"    Min GPU: {m.min_gpu_memory_gb} GB")
+            print(f"    Domain: {m.domain.value}")
+            print(f"    LoRA: {'✓' if m.supports_lora else '✗'}")
+            print(f"    4-bit: {'✓' if m.supports_4bit else '✗'}")
+            print(f"    Repo: {m.hf_repo}")
+    
+    print("\n" + "="*80)
+    print("\nUsage: Set 'medical_llm' in config to model_id")
+    print("Example: medical_llm: 'biomistral-7b'")
+    print("="*80 + "\n")
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -463,15 +602,17 @@ def main():
         epilog="""
 Examples:
   python main.py train --config config/clinical_rlhf_config.yaml
+  python main.py train --config config/production_config.yaml  # Real models
   python main.py evaluate --config config/clinical_rlhf_config.yaml --checkpoint checkpoints/best
   python main.py collect-feedback --config config/clinical_rlhf_config.yaml --expert-id EXP001
   python main.py safety-demo --config config/clinical_rlhf_config.yaml
+  python main.py list-models  # Show available medical LLMs
         """
     )
     
     parser.add_argument(
         "command",
-        choices=["train", "evaluate", "collect-feedback", "safety-demo"],
+        choices=["train", "evaluate", "collect-feedback", "safety-demo", "list-models"],
         help="Command to run"
     )
     
@@ -502,6 +643,10 @@ Examples:
     config = load_config(args.config)
     
     # Route to appropriate command
+    if args.command == "list-models":
+        list_models_command()
+        return
+    
     if args.command == "train":
         train_pipeline(config)
     elif args.command == "evaluate":

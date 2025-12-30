@@ -1,0 +1,69 @@
+# Clinical RLHF Pipeline - Production Requirements
+# For real medical LLM training
+
+# Core ML
+torch>=2.1.0
+numpy>=1.24.0
+
+# Transformers ecosystem
+transformers>=4.36.0
+tokenizers>=0.15.0
+accelerate>=0.25.0
+datasets>=2.15.0
+
+# PEFT/LoRA for efficient fine-tuning
+peft>=0.7.0
+
+# Quantization
+bitsandbytes>=0.41.0  # Linux/WSL only, see note below
+
+# Flash Attention (optional, requires CUDA)
+# flash-attn>=2.3.0  # Uncomment if you have CUDA 11.8+
+
+# MLOps
+mlflow>=2.9.0
+prometheus-client>=0.19.0
+
+# Data processing
+pyyaml>=6.0
+pandas>=2.0.0
+
+# Sentence embeddings for guideline matching
+sentence-transformers>=2.2.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Monitoring
+grafana-client>=3.0.0  # Optional
+
+# API (optional, for serving)
+# fastapi>=0.104.0
+# uvicorn>=0.24.0
+
+# ============================================================================
+# NOTES:
+# ============================================================================
+# 
+# 1. bitsandbytes on Windows:
+#    - Does NOT work natively on Windows
+#    - Use WSL2 with Ubuntu for quantization
+#    - Or use pre-quantized GPTQ models without bitsandbytes
+#
+# 2. Flash Attention:
+#    - Requires CUDA 11.8+ and Ampere GPU (RTX 30xx/40xx, A100, etc.)
+#    - Install separately: pip install flash-attn --no-build-isolation
+#
+# 3. For CPU-only training:
+#    - Remove bitsandbytes from requirements
+#    - Set load_in_4bit: false and load_in_8bit: false in config
+#    - Use smaller models like 'biogpt'
+#
+# 4. Minimum GPU requirements by model:
+#    - biogpt: 4GB VRAM (or CPU)
+#    - biomistral-7b (4-bit): 8GB VRAM
+#    - biomistral-7b (full): 24GB VRAM
+#    - meditron-70b (4-bit): 48GB VRAM
+#
+# ============================================================================
